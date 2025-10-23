@@ -1,63 +1,54 @@
-// src/models/OTP.model.ts
-import { Schema, model, Document } from "mongoose";
+import mongoose, { Document, Schema } from 'mongoose';
 
 export interface IOTP extends Document {
   email: string;
   code: string;
-  purpose:
-    | "registration"
-    | "login"
-    | "password_reset"
-    | "email_change"
-    | "security";
+  purpose: string;
   attempts: number;
   verified: boolean;
-  usedAt?: Date;
   expiresAt: Date;
+  usedAt?: Date;
   createdAt: Date;
   updatedAt: Date;
 }
 
-const OTPSchema = new Schema(
+const OTPSchema = new Schema<IOTP>(
   {
     email: {
       type: String,
       required: true,
-      index: true,
-      lowercase: true,
       trim: true,
+      lowercase: true,
+      index: true,
     },
     code: {
       type: String,
       required: true,
+      trim: true,
     },
     purpose: {
       type: String,
       required: true,
-      enum: [
-        "registration",
-        "login",
-        "password_reset",
-        "email_change",
-        "security",
-      ],
-      default: "registration",
+      default: 'registration',
+      enum: ['registration', 'password_reset', 'email_change', 'two_factor'],
     },
     attempts: {
       type: Number,
       default: 0,
+      min: 0,
+      max: 10,
     },
     verified: {
       type: Boolean,
       default: false,
     },
-    usedAt: {
-      type: Date,
-    },
     expiresAt: {
       type: Date,
       required: true,
       index: true,
+    },
+    usedAt: {
+      type: Date,
     },
   },
   {
@@ -65,9 +56,17 @@ const OTPSchema = new Schema(
   }
 );
 
-// Índices para performance
+// Índices para melhor performance
 OTPSchema.index({ email: 1, purpose: 1 });
-OTPSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 }); // TTL index
+OTPSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
 OTPSchema.index({ createdAt: 1 });
 
-export const OTPModel = model<IOTP>("OTP", OTPSchema);
+// Middleware para limpar OTPs expirados
+OTPSchema.pre('save', function (next) {
+  if (this.expiresAt < new Date()) {
+    this.verified = true; // Marca como expirado
+  }
+  next();
+});
+
+export const OTPModel = mongoose.model<IOTP>('OTP', OTPSchema);

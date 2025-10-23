@@ -1,13 +1,9 @@
+// NOTIFICATIONS-SERVICE/src/services/otp/OTP.service.ts
 import { OTPModel } from "../../models/OTP.model";
 import { VerifiedEmailModel } from "../../models/VerifiedEmail.model";
+import { NotificationService } from "../notifications/Notification.service";
 import { AppError } from "../../utils/AppError";
-
-// Interfaces para os métodos novos
-interface OTPValidationResult {
-  isValid: boolean;
-  retryAfter?: number;
-  message?: string;
-}
+import { UserRole } from "../../models/interfaces/Notification.interface";
 
 export class OTPService {
   private readonly OTP_CONFIG = {
@@ -16,6 +12,12 @@ export class OTPService {
     MAX_ATTEMPTS: 5,
     RESEND_DELAY: 60, // 60 segundos
   };
+
+  private notificationService: NotificationService;
+
+  constructor() {
+    this.notificationService = new NotificationService();
+  }
 
   private generateOTP(): string {
     const digits = "0123456789";
@@ -79,71 +81,109 @@ export class OTPService {
 
       console.log(`✅ [OTP SERVICE] OTP gerado: ${otpCode} para ${email}`);
 
-      // ✅ CORREÇÃO: PROCESSAR NOTIFICAÇÃO INTERNAMENTE (SEM CHAMADA HTTP)
+      // ✅ ENVIO REAL DE EMAIL
       try {
-        console.log(`📧 [OTP SERVICE] Simulando envio de email para: ${email}`);
-        console.log(`📝 [OTP SERVICE] Assunto: Seu Código de Verificação - ${purpose}`);
-        console.log(`📄 [OTP SERVICE] Mensagem: Olá ${name || 'usuário'}, seu código OTP é: ${otpCode}. Expira em ${this.OTP_CONFIG.EXPIRES_IN} minutos.`);
-        
-        // ✅ SIMULAÇÃO DE ENVIO BEM-SUCEDIDO
-        const notificationSuccess = true;
+        let userRole: UserRole = UserRole.CLIENT;
+        if (purpose.includes('admin')) userRole = UserRole.ADMIN_SYSTEM;
+        if (purpose.includes('employee')) userRole = UserRole.EMPLOYEE;
+        if (purpose.includes('owner')) userRole = UserRole.SALON_OWNER;
 
-        if (!notificationSuccess) {
+        const emailSent = await this.notificationService.sendOTP(
+          email, 
+          otpCode, 
+          name, 
+          userRole
+        );
+
+        if (!emailSent) {
           await OTPModel.findByIdAndDelete(otpData._id);
           throw new AppError(
-            "Erro ao enviar notificação de verificação",
+            "Falha ao enviar email de verificação",
             500,
-            "NOTIFICATION_SEND_ERROR"
+            "EMAIL_SEND_FAILED"
           );
         }
 
-        console.log(`✅ [OTP SERVICE] Notificação simulada com sucesso para: ${email}`);
+        console.log(`✅ [OTP SERVICE] Email REAL enviado para: ${email}`);
         
         return { 
           success: true,
-          debugOtp: otpCode // ⚠️ Apenas para testes - remover em produção
+          debugOtp: process.env.NODE_ENV === 'development' ? otpCode : undefined
         };
 
       } catch (notificationError) {
         await OTPModel.findByIdAndDelete(otpData._id);
-        console.error(`❌ [OTP SERVICE] Erro na notificação:`, notificationError);
+        console.error(`❌ [OTP SERVICE] Erro ao enviar email:`, notificationError);
         throw new AppError(
-          "Serviço de notificação indisponível",
+          "Serviço de email indisponível",
           500,
-          "NOTIFICATION_SERVICE_UNAVAILABLE"
+          "EMAIL_SERVICE_UNAVAILABLE"
         );
       }
 
     } catch (error) {
-      console.error(`❌ [OTP SERVICE] Erro geral no sendOTP:`, error);
+      console.error(`❌ [OTP SERVICE] Erro geral:`, error);
       throw error;
     }
   }
 
   async verifyOTP(
     email: string,
-    code: string,
-    purpose?: string
+    otpCode: string,
+    purpose: string = "registration"
   ): Promise<{ success: boolean; message: string }> {
     try {
-      console.log(`✅ [OTP SERVICE] Verificando OTP: ${code} para ${email}`);
-      
+      console.log(`🎯 [OTP SERVICE VERIFY] Iniciando verificação para:`, {
+        email,
+        otpCode,
+        purpose,
+        otpCodeLength: otpCode?.length,
+        otpCodeType: typeof otpCode
+      });
+
+      // ✅ VALIDAÇÃO ROBUSTA DOS PARÂMETROS
+      if (!email || !otpCode || otpCode.toString().trim() === '') {
+        console.log('❌ [OTP SERVICE VERIFY] VALIDAÇÃO FALHOU:', {
+          emailPresent: !!email,
+          otpCodePresent: !!otpCode,
+          otpCodeValue: otpCode,
+          emailValue: email
+        });
+        return {
+          success: false,
+          message: "Email e código OTP são obrigatórios"
+        };
+      }
+
+      // ✅ VALIDAÇÃO DO FORMATO DO CÓDIGO
+      const cleanOtpCode = otpCode.toString().trim();
+      if (!/^\d{6}$/.test(cleanOtpCode)) {
+        console.log('❌ [OTP SERVICE VERIFY] Formato de código inválido:', cleanOtpCode);
+        return {
+          success: false,
+          message: "Código deve ter exatamente 6 dígitos"
+        };
+      }
+
+      console.log(`🔍 [OTP SERVICE VERIFY] Buscando OTP no banco para: ${email}`);
+
+      // ✅ BUSCA OTP NO BANCO
       const otpData = await OTPModel.findOne({
         email: email.toLowerCase().trim(),
-        purpose: purpose || "registration",
+        purpose: purpose,
         expiresAt: { $gt: new Date() },
       });
 
       if (!otpData) {
-        console.log(`❌ [OTP SERVICE] OTP não encontrado/expirado para: ${email}`);
+        console.log(`❌ [OTP SERVICE VERIFY] OTP não encontrado/expirado para: ${email}`);
         return {
           success: false,
-          message: "Código OTP não encontrado ou expirado",
+          message: "Código OTP não encontrado ou expirado. Solicite um novo código.",
         };
       }
 
       if (otpData.verified) {
-        console.log(`❌ [OTP SERVICE] OTP já utilizado para: ${email}`);
+        console.log(`❌ [OTP SERVICE VERIFY] OTP já utilizado para: ${email}`);
         return {
           success: false,
           message: "Código OTP já foi utilizado. Solicite um novo código.",
@@ -152,19 +192,20 @@ export class OTPService {
 
       if (otpData.attempts >= this.OTP_CONFIG.MAX_ATTEMPTS) {
         await OTPModel.findByIdAndUpdate(otpData._id, { verified: true });
-        console.log(`❌ [OTP SERVICE] Tentativas excedidas para: ${email}`);
+        console.log(`❌ [OTP SERVICE VERIFY] Tentativas excedidas para: ${email}`);
         return {
           success: false,
           message: "Número máximo de tentativas excedido. Solicite um novo código.",
         };
       }
 
-      if (otpData.code !== code) {
+      // ✅ VERIFICA SE O CÓDIGO CONFERE
+      if (otpData.code !== cleanOtpCode) {
         otpData.attempts += 1;
         await otpData.save();
 
         const remainingAttempts = this.OTP_CONFIG.MAX_ATTEMPTS - otpData.attempts;
-        console.log(`❌ [OTP SERVICE] OTP incorreto para: ${email}. Tentativas: ${otpData.attempts}`);
+        console.log(`❌ [OTP SERVICE VERIFY] OTP incorreto para: ${email}. Tentativas: ${otpData.attempts}/${this.OTP_CONFIG.MAX_ATTEMPTS}`);
         
         return {
           success: false,
@@ -177,19 +218,21 @@ export class OTPService {
       otpData.usedAt = new Date();
       await otpData.save();
 
-      console.log(`✅ [OTP SERVICE] OTP verificado com sucesso para: ${email}`);
+      console.log(`✅ [OTP SERVICE VERIFY] OTP verificado com sucesso para: ${email}`);
 
-      // ✅ MARCA EMAIL COMO VERIFICADO NO SISTEMA
-      const verifiedPurpose = (purpose || 'registration') as "registration" | "password_reset" | "email_change";
-      await this.markEmailAsVerified(email, verifiedPurpose);
+      // ✅ MARCA EMAIL COMO VERIFICADO
+      await this.markEmailAsVerified(email, purpose);
 
       return {
         success: true,
         message: "Email verificado com sucesso",
       };
     } catch (error) {
-      console.error(`❌ [OTP SERVICE] Erro na verificação:`, error);
-      throw error;
+      console.error(`💥 [OTP SERVICE VERIFY] Erro na verificação:`, error);
+      return {
+        success: false,
+        message: "Erro interno na verificação do código"
+      };
     }
   }
 
@@ -212,12 +255,15 @@ export class OTPService {
 
       return await this.sendOTP(email, purpose, name);
     } catch (error) {
+      console.error(`❌ [OTP SERVICE] Erro ao reenviar OTP:`, error);
       throw error;
     }
   }
 
-  // ✅ MÉTODO PARA USAR SEU VerifiedEmailModel
-  async markEmailAsVerified(email: string, purpose: "registration" | "password_reset" | "email_change" = 'registration'): Promise<void> {
+  async markEmailAsVerified(
+    email: string, 
+    purpose: string = "registration"
+  ): Promise<void> {
     try {
       await VerifiedEmailModel.findOneAndUpdate(
         { 
@@ -231,12 +277,17 @@ export class OTPService {
         },
         { upsert: true, new: true }
       );
+      console.log(`✅ [OTP SERVICE] Email marcado como verificado: ${email}, propósito: ${purpose}`);
     } catch (error) {
+      console.error(`❌ [OTP SERVICE] Erro ao marcar email como verificado:`, error);
       throw new AppError('Erro ao marcar email como verificado', 500, 'EMAIL_VERIFICATION_ERROR');
     }
   }
 
-  async isEmailVerified(email: string, purpose: "registration" | "password_reset" | "email_change" = 'registration'): Promise<boolean> {
+  async isEmailVerified(
+    email: string, 
+    purpose: string = "registration"
+  ): Promise<boolean> {
     try {
       const verification = await VerifiedEmailModel.findOne({
         email: email.toLowerCase().trim(),
@@ -245,20 +296,13 @@ export class OTPService {
         expiresAt: { $gt: new Date() },
       });
       
-      return !!verification;
+      const isVerified = !!verification;
+      console.log(`🔍 [OTP SERVICE] Verificação de email ${email}: ${isVerified ? 'VERIFICADO' : 'NÃO VERIFICADO'}`);
+      
+      return isVerified;
     } catch (error) {
+      console.error(`❌ [OTP SERVICE] Erro ao verificar email:`, error);
       return false;
-    }
-  }
-
-  async invalidateEmailVerification(email: string, purpose: "registration" | "password_reset" | "email_change" = 'registration'): Promise<void> {
-    try {
-      await VerifiedEmailModel.findOneAndUpdate(
-        { email: email.toLowerCase().trim(), purpose },
-        { isVerified: false, verifiedAt: null }
-      );
-    } catch (error) {
-      throw new AppError('Erro ao invalidar verificação de email', 500, 'INVALIDATE_VERIFICATION_ERROR');
     }
   }
 
@@ -269,13 +313,31 @@ export class OTPService {
     expiresAt: Date | null;
     purpose?: string;
   }> {
-    const otpData = await OTPModel.findOne({
-      email: email.toLowerCase().trim(),
-      verified: false,
-      expiresAt: { $gt: new Date() },
-    });
+    try {
+      const otpData = await OTPModel.findOne({
+        email: email.toLowerCase().trim(),
+        verified: false,
+        expiresAt: { $gt: new Date() },
+      });
 
-    if (!otpData) {
+      if (!otpData) {
+        return { 
+          exists: false, 
+          verified: false, 
+          attempts: 0, 
+          expiresAt: null 
+        };
+      }
+
+      return {
+        exists: true,
+        verified: otpData.verified,
+        attempts: otpData.attempts,
+        expiresAt: otpData.expiresAt,
+        purpose: otpData.purpose,
+      };
+    } catch (error) {
+      console.error(`❌ [OTP SERVICE] Erro ao buscar status OTP:`, error);
       return { 
         exists: false, 
         verified: false, 
@@ -283,154 +345,42 @@ export class OTPService {
         expiresAt: null 
       };
     }
-
-    return {
-      exists: true,
-      verified: otpData.verified,
-      attempts: otpData.attempts,
-      expiresAt: otpData.expiresAt,
-      purpose: otpData.purpose,
-    };
-  }
-
-  async invalidateOTP(email: string, purpose?: string): Promise<void> {
-    const filter: any = { 
-      email: email.toLowerCase().trim(), 
-      verified: false 
-    };
-    
-    if (purpose) {
-      filter.purpose = purpose;
-    }
-    
-    await OTPModel.updateMany(filter, { verified: true });
   }
 
   async cleanupExpiredOTPs(): Promise<{ deleted: number }> {
-    const result = await OTPModel.deleteMany({
-      $or: [
-        { expiresAt: { $lt: new Date() } },
-        { verified: true, createdAt: { $lt: new Date(Date.now() - 24 * 60 * 60 * 1000) } }
-      ]
-    });
-
-    return { deleted: result.deletedCount || 0 };
-  }
-
-  async getOTPStatistics(email: string): Promise<{
-    totalSent: number;
-    totalVerified: number;
-    lastSent: Date | null;
-    successRate: number;
-  }> {
-    const totalSent = await OTPModel.countDocuments({ 
-      email: email.toLowerCase().trim() 
-    });
-    
-    const totalVerified = await OTPModel.countDocuments({
-      email: email.toLowerCase().trim(),
-      verified: true,
-    });
-    
-    const lastOTP = await OTPModel.findOne({ 
-      email: email.toLowerCase().trim() 
-    })
-      .sort({ createdAt: -1 })
-      .select("createdAt");
-
-    const successRate = totalSent > 0 ? (totalVerified / totalSent) * 100 : 0;
-
-    return {
-      totalSent,
-      totalVerified,
-      lastSent: lastOTP?.createdAt || null,
-      successRate: Math.round(successRate * 100) / 100,
-    };
-  }
-
-  async getGlobalStatistics(): Promise<{
-    totalOTPs: number;
-    verifiedOTPs: number;
-    expiredOTPs: number;
-    averageVerificationTime: number;
-  }> {
-    const totalOTPs = await OTPModel.countDocuments();
-    const verifiedOTPs = await OTPModel.countDocuments({ verified: true });
-    const expiredOTPs = await OTPModel.countDocuments({ 
-      expiresAt: { $lt: new Date() } 
-    });
-
-    return {
-      totalOTPs,
-      verifiedOTPs,
-      expiredOTPs,
-      averageVerificationTime: 0
-    };
-  }
-
-  // ✅ MÉTODOS NOVOS PARA O MIDDLEWARE
-  async validateOTPRequest(email: string, purpose: string): Promise<OTPValidationResult> {
     try {
-      // Verifica rate limit
-      const recentOTP = await OTPModel.findOne({
-        email: email.toLowerCase().trim(),
-        purpose,
-        createdAt: {
-          $gte: new Date(Date.now() - this.OTP_CONFIG.RESEND_DELAY * 1000),
-        },
+      const result = await OTPModel.deleteMany({
+        $or: [
+          { expiresAt: { $lt: new Date() } },
+          { verified: true, createdAt: { $lt: new Date(Date.now() - 24 * 60 * 60 * 1000) } }
+        ]
       });
 
-      if (recentOTP) {
-        const timeElapsed = Date.now() - recentOTP.createdAt.getTime();
-        const retryAfter = this.OTP_CONFIG.RESEND_DELAY * 1000 - timeElapsed;
-        if (retryAfter > 0) {
-          return {
-            isValid: false,
-            retryAfter: Math.ceil(retryAfter / 1000),
-            message: `Aguarde ${Math.ceil(retryAfter / 1000)} segundos para solicitar um novo código`
-          };
-        }
-      }
+      console.log(`🧹 [OTP SERVICE] Limpeza concluída: ${result.deletedCount || 0} OTPs removidos`);
+      return { deleted: result.deletedCount || 0 };
+    } catch (error) {
+      console.error(`❌ [OTP SERVICE] Erro na limpeza de OTPs:`, error);
+      return { deleted: 0 };
+    }
+  }
 
-      // Verifica se já existe OTP ativo
-      const activeOTP = await OTPModel.findOne({
+  async hasActiveOTP(email: string, purpose?: string): Promise<boolean> {
+    try {
+      const filter: any = {
         email: email.toLowerCase().trim(),
-        purpose,
         verified: false,
         expiresAt: { $gt: new Date() },
-      });
+      };
 
-      if (activeOTP) {
-        const timeLeft = activeOTP.expiresAt.getTime() - Date.now();
-        return {
-          isValid: false,
-          message: `Já existe um código ativo. Expira em ${Math.ceil(timeLeft / 1000 / 60)} minutos`
-        };
+      if (purpose) {
+        filter.purpose = purpose;
       }
 
-      return { isValid: true };
+      const activeOTP = await OTPModel.findOne(filter);
+      return !!activeOTP;
     } catch (error) {
-      return {
-        isValid: false,
-        message: "Erro ao validar solicitação OTP"
-      };
+      console.error(`❌ [OTP SERVICE] Erro ao verificar OTP ativo:`, error);
+      return false;
     }
-  }
-
-  async getOTPByEmail(email: string, purpose?: string): Promise<any> {
-    const filter: any = {
-      email: email.toLowerCase().trim(),
-      verified: false,
-      expiresAt: { $gt: new Date() },
-    };
-
-    if (purpose) {
-      filter.purpose = purpose;
-    }
-
-    return await OTPModel.findOne(filter);
   }
 }
-
-// ✅ EXPORTAR INSTÂNCIA
-export default new OTPService();

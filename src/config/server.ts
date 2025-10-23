@@ -1,92 +1,119 @@
-import express from "express";
-import cors from "cors";
-import helmet from "helmet";
-import rateLimit from "express-rate-limit";
-import { httpLogger } from "../utils/logger";
-import { getConfig } from "./environment";
+// src/config/server.ts - VERSÃO SIMPLIFICADA
+import dotenv from "dotenv";
+dotenv.config();
 
-// ✅ IMPORTAÇÃO DAS ROTAS DE PROXY
-import userRoutes from "../routes/users.routes";
-import notificationRoutes from "../routes/notifications.routes";
-import otpRoutes from "../routes/otp.routes";
-import internalRoutes from "../routes/internal.routes";
+import app from "../app";
+import { 
+  connectDB, 
+  disconnectDB, 
+  getDatabaseStatus,
+  healthCheck 
+} from "./database";
+import chalk from "chalk";
 
-export const createServer = () => {
-  const app = express();
-  const config = getConfig();
+const getTimestamp = () => chalk.gray(`[${new Date().toISOString()}]`);
 
-  // ✅ MIDDLEWARES BÁSICOS
-  app.use(helmet());
-  app.use(
-    cors({
-      origin: process.env.ALLOWED_ORIGINS?.split(",") || [
-        "http://localhost:3000",
-      ],
-      credentials: true,
-    })
-  );
+const PORT = process.env.PORT || 3006;
+const NODE_ENV = process.env.NODE_ENV || "development";
 
-  // ✅ RATE LIMITING
-  const limiter = rateLimit({
-    windowMs: 15 * 60 * 1000,
-    max: 1000, // Limite maior para gateway
-    message: {
-      success: false,
-      error: "Muitas requisições deste IP",
-    },
-  });
-  app.use(limiter);
+// ✅ CORREÇÃO: Tipo mais simples
+let server: any = null;
 
-  app.use(express.json({ limit: "10mb" }));
-  app.use(express.urlencoded({ extended: true }));
-  app.use(httpLogger);
+/**
+ * Inicializa e inicia o servidor
+ */
+const startServer = async (): Promise<void> => {
+  try {
+    console.log(
+      `${getTimestamp()} ${chalk.blue("🚀")} Starting Notification Service...`
+    );
+    console.log(
+      `${getTimestamp()} ${chalk.gray("⚡")} Environment: ${NODE_ENV}`
+    );
 
-  return { app, config };
-};
+    // ✅ Conectar ao DB
+    try {
+      await connectDB();
+      
+      const dbStatus = getDatabaseStatus();
+      console.log(
+        `${getTimestamp()} ${chalk.green("✅")} Database: ${dbStatus.database} - ${dbStatus.readyStateDescription}`
+      );
+      
+      // ✅ Health check adicional
+      const health = await healthCheck();
+      console.log(
+        `${getTimestamp()} ${chalk.green("❤️")} Health check: ${health.status}`
+      );
+    } catch (error) {
+      console.log(
+        `${getTimestamp()} ${chalk.yellow("⚠️")} Continuing without MongoDB connection`
+      );
+    }
 
-export const setupRoutes = (app: express.Application) => {
-  // ✅ ROTAS DE PROXY PARA MICROSERVIÇOS
-  app.use("/api/users", userRoutes);
-  app.use("/api/notifications", notificationRoutes);
-  app.use("/api/otp", otpRoutes);
-
-  // ✅ ROTAS INTERNAS DO GATEWAY
-  app.use("/api/internal", internalRoutes);
-
-  // ✅ HEALTH CHECK
-  app.get("/health", (req, res) => {
-    res.json({
-      status: "healthy",
-      service: "beautytime-gateway",
-      version: "1.0.0",
-      timestamp: new Date().toISOString(),
+    // ✅ Iniciar servidor HTTP
+    server = app.listen(PORT, () => {
+      const dbStatus = getDatabaseStatus();
+      
+      console.log(
+        `${getTimestamp()} ${chalk.green("✅")} Notification Service running on port ${PORT}`
+      );
+      console.log(
+        `${getTimestamp()} ${chalk.blue("🌐")} URL: http://localhost:${PORT}`
+      );
+      console.log(
+        `${getTimestamp()} ${chalk.blue("🗄️")} Database: ${dbStatus.database} - ${
+          dbStatus.isConnected ? chalk.green('CONNECTED') : chalk.yellow('DISCONNECTED')
+        }`
+      );
     });
-  });
 
-  // ✅ ROTA 404
-  app.use("*", (req, res) => {
-    res.status(404).json({
-      success: false,
-      error: "Rota não encontrada",
-      availableRoutes: [
-        "/api/users/*",
-        "/api/notifications/*",
-        "/api/otp/*",
-        "/api/internal/health",
-        "/api/internal/services",
-      ],
+    // 🛑 Configuração de Graceful Shutdown
+    const shutdown = async (): Promise<void> => {
+      console.log(`${getTimestamp()} ${chalk.yellow("🛑")} Shutting down gracefully...`);
+      
+      if (server) {
+        server.close(async () => {
+          console.log(`${getTimestamp()} ${chalk.green("✅")} HTTP server closed`);
+          await disconnectDB();
+          console.log(`${getTimestamp()} ${chalk.green("🎯")} Service stopped`);
+          process.exit(0);
+        });
+
+        setTimeout(() => {
+          console.error(`${getTimestamp()} ${chalk.red("💥")} Forcing shutdown`);
+          process.exit(1);
+        }, 10000);
+      } else {
+        await disconnectDB();
+        process.exit(0);
+      }
+    };
+
+    process.on("SIGINT", shutdown);
+    process.on("SIGTERM", shutdown);
+    
+    process.on("unhandledRejection", (reason: unknown) => {
+      console.error(`${getTimestamp()} ${chalk.red("⚠️")} Unhandled Rejection:`, reason);
     });
-  });
+    
+    process.on("uncaughtException", (err: Error) => {
+      console.error(`${getTimestamp()} ${chalk.red("💥")} Uncaught Exception:`, err);
+      shutdown();
+    });
+
+  } catch (error) {
+    console.error(
+      `${getTimestamp()} ${chalk.red("❌")} Error starting server:`,
+      error
+    );
+    process.exit(1);
+  }
 };
 
-export const startServer = (app: express.Application, port: number) => {
-  return app.listen(port, () => {
-    console.log(`
-🚀 BeautyTime GATEWAY iniciado!
-📍 Porta: ${port}
-🌍 Ambiente: ${process.env.NODE_ENV || "development"}
-📡 Proxy para microserviços
-📅 ${new Date().toISOString()}
-    `);
-  });
-};
+// ✅ Iniciar o servidor
+if (require.main === module) {
+  startServer();
+}
+
+export default startServer;

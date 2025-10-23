@@ -50,7 +50,8 @@ export class WhatsAppChannel {
       [key: string]: string;
     }
 
-    const templates: Record<NotificationType, TemplateConfig> = {
+    // ✅ CORREÇÃO: Usar apenas os tipos que existem no NotificationType
+    const templates: Partial<Record<NotificationType, TemplateConfig>> = {
       [NotificationType.OTP]: {
         default: `🔐 *BeautyTime - Código de Verificação*\n\nOlá! Seu código de verificação é: *${request.data.otpCode}*\n\nEste código expira em 10 minutos.\n\n_Não compartilhe este código com ninguém._`,
         [UserRole.ADMIN_SYSTEM]: `🔐 *BeautyTime - Código Admin*\n\nCódigo de verificação: *${request.data.otpCode}*\n\nExpira em 10 minutos.`,
@@ -77,15 +78,45 @@ export class WhatsAppChannel {
           request.data.appointment?.location || "Nosso salão"
         }`,
       },
-      [NotificationType.SECURITY]: {
-        default: `🛡️ *BeautyTime - Segurança*\n\n${
-          request.data.message || "Notificação de segurança."
-        }`,
+      [NotificationType.SECURITY_ALERT]: {
+        default: `🛡️ *BeautyTime - Alerta de Segurança*\n\n${
+          request.data.message || "Atividade suspeita detectada na sua conta."
+        }\n\nSe não foi você, entre em contato conosco imediatamente.`,
       },
-      [NotificationType.MARKETING]: {
-        default: `📢 *BeautyTime*\n\n${
-          request.data.message || "Promoção especial!"
-        }`,
+      [NotificationType.APPOINTMENT_CONFIRMATION]: {
+        default: `✅ *Agendamento Confirmado!*\n\nOlá ${
+          request.data.name
+        }! Seu agendamento foi confirmado:\n\n📅 ${
+          request.data.service
+        }\n🕐 ${request.data.date} às ${request.data.time}\n👨‍💼 ${
+          request.data.professional
+        }\n\n📍 ${request.data.location || "Nosso salão"}`,
+      },
+      [NotificationType.APPOINTMENT_REMINDER]: {
+        default: `⏰ *Lembrete de Agendamento*\n\nOlá ${
+          request.data.name
+        }! Lembrete do seu agendamento:\n\n📅 ${
+          request.data.service
+        }\n🕐 ${request.data.date} às ${request.data.time}\n👨‍💼 ${
+          request.data.professional
+        }\n\n📍 ${request.data.location || "Nosso salão"}`,
+      },
+      [NotificationType.PAYMENT_CONFIRMATION]: {
+        default: `💳 *Pagamento Confirmado!*\n\nOlá ${
+          request.data.name
+        }! Seu pagamento foi processado com sucesso.\n\n💰 Valor: R$ ${
+          request.data.amount
+        }\n📅 Data: ${request.data.date}\n\nObrigado por escolher a BeautyTime!`,
+      },
+      [NotificationType.PASSWORD_RESET]: {
+        default: `🔑 *Redefinição de Senha*\n\nOlá! Você solicitou a redefinição de senha.\n\nSeu código de verificação é: *${request.data.otpCode}*\n\nExpira em 15 minutos.`,
+      },
+      [NotificationType.NEW_MESSAGE]: {
+        default: `💬 *Nova Mensagem*\n\nOlá ${
+          request.data.name
+        }! Você recebeu uma nova mensagem:\n\n"${
+          request.data.messageContent
+        }"\n\nAcesse o app para responder.`,
       },
     };
 
@@ -110,6 +141,15 @@ export class WhatsAppChannel {
   ): Promise<boolean> {
     try {
       console.log(`[WHATSAPP SIMULADO] Para: ${email}, Mensagem: ${message}`);
+      
+      // Simular envio real (remover em produção)
+      if (process.env.NODE_ENV !== 'production') {
+        console.log(`📱 WHATSAPP SIMULATION:`);
+        console.log(`   To: ${email}`);
+        console.log(`   Message: ${message}`);
+        console.log(`   ---`);
+      }
+      
       await new Promise((resolve) => setTimeout(resolve, 1000));
       return true;
     } catch (error: unknown) {

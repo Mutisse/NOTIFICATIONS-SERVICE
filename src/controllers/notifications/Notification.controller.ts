@@ -1,13 +1,114 @@
-import { Request, Response, NextFunction } from "express";
+import { Request, Response } from "express";
+import { NotificationService } from "../../services/notifications/Notification.service";
+import { OTPService } from "../../services/otp/OTP.service";
 import { AppError } from "../../utils/AppError";
-import { AuthRequest } from "../../middleware/auth.middleware";
+import {
+  NotificationChannel,
+  NotificationType,
+  UserRole,
+} from "../../models/interfaces/Notification.interface";
 
 export class NotificationController {
-  public sendNotification = async (
-    req: Request,
-    res: Response,
-    next: NextFunction
-  ) => {
+  private notificationService: NotificationService;
+  private otpService: OTPService;
+
+  constructor() {
+    this.notificationService = new NotificationService();
+    this.otpService = new OTPService();
+  }
+
+  // ✅ ENVIAR EMAIL DE VERIFICAÇÃO
+  sendVerificationEmail = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { email, name, userRole } = req.body;
+
+      if (!email) {
+        throw new AppError("Email é obrigatório", 400);
+      }
+
+      const result = await this.notificationService.sendOTP(
+        email,
+        "123456",
+        name,
+        userRole
+      );
+
+      res.json({
+        success: result,
+        message: result
+          ? "Email de verificação enviado com sucesso"
+          : "Falha ao enviar email de verificação",
+      });
+    } catch (error: any) {
+      console.error("Erro ao enviar email de verificação:", error);
+      res.status(error.statusCode || 500).json({
+        success: false,
+        error: error.message,
+      });
+    }
+  };
+
+  // ✅ VERIFICAR EMAIL VIA OTP
+  verifyEmailOTP = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { email, otpCode } = req.body;
+
+      if (!email || !otpCode) {
+        throw new AppError("Email e código OTP são obrigatórios", 400);
+      }
+
+      const result = await this.otpService.verifyOTP(
+        email,
+        otpCode,
+        "registration"
+      );
+
+      res.json({
+        success: result.success,
+        message: result.message,
+        verified: result.success,
+      });
+    } catch (error: any) {
+      console.error("Erro ao verificar OTP:", error);
+      res.status(error.statusCode || 500).json({
+        success: false,
+        error: error.message,
+      });
+    }
+  };
+
+  // ✅ ENVIAR EMAIL DE BOAS-VINDAS
+  sendWelcomeEmail = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { email, userRole, userData } = req.body;
+
+      if (!email) {
+        throw new AppError("Email é obrigatório", 400);
+      }
+
+      const result = await this.notificationService.sendWelcome(
+        email,
+        userRole || UserRole.CLIENT,
+        userData || {}
+      );
+
+      res.json({
+        success: result,
+        message: result
+          ? "Email de boas-vindas enviado com sucesso"
+          : "Falha ao enviar email de boas-vindas",
+      });
+    } catch (error: any) {
+      console.error("Erro ao enviar email de boas-vindas:", error);
+      res.status(error.statusCode || 500).json({
+        success: false,
+        error: error.message,
+      });
+    }
+  };
+
+  // ✅ ENVIAR NOTIFICAÇÃO
+  sendNotification = async (req: Request, res: Response): Promise<void> => {
     try {
       const { email, channel, type, userRole, data, metadata } = req.body;
 
@@ -15,263 +116,212 @@ export class NotificationController {
         throw new AppError("Email, channel e type são obrigatórios", 400);
       }
 
-      // Simulação - em produção, integrar com NotificationService
-      console.log(
-        `[NOTIFICATION] Enviando ${type} via ${channel} para ${email}`
-      );
-
-      res.status(200).json({
-        success: true,
-        message: "Notificação enviada com sucesso",
-        data: {
-          notificationId: "simulated-" + Date.now(),
-          email,
-          channel,
-          type,
-        },
+      const result = await this.notificationService.sendNotification({
+        email,
+        channel: channel as NotificationChannel,
+        type: type as NotificationType,
+        userRole: userRole as UserRole,
+        data: data || {},
+        metadata: metadata || {},
       });
-    } catch (error) {
-      next(error);
+
+      res.json({
+        success: result.success,
+        notificationId: result.notificationId,
+        channel: result.channel,
+        message: result.success
+          ? "Notificação enviada com sucesso"
+          : "Falha ao enviar notificação",
+      });
+    } catch (error: any) {
+      console.error("Erro ao enviar notificação:", error);
+      res.status(error.statusCode || 500).json({
+        success: false,
+        error: error.message,
+      });
     }
   };
 
-  public sendBulkNotifications = async (
-    req: Request,
-    res: Response,
-    next: NextFunction
-  ) => {
+  // ✅ ENVIAR NOTIFICAÇÕES EM MASSA
+  sendBulkNotifications = async (req: Request, res: Response): Promise<void> => {
     try {
       const { notifications } = req.body;
 
-      if (!Array.isArray(notifications)) {
-        throw new AppError("Notifications deve ser um array", 400);
+      if (!Array.isArray(notifications) || notifications.length === 0) {
+        throw new AppError("Array de notificações é obrigatório", 400);
       }
 
-      console.log(
-        `[BULK NOTIFICATION] Enviando ${notifications.length} notificações`
+      const results = await Promise.allSettled(
+        notifications.map((notification) =>
+          this.notificationService.sendNotification(notification)
+        )
       );
 
-      res.status(200).json({
-        success: true,
-        data: {
-          total: notifications.length,
-          successful: notifications.length,
-          failed: 0,
-          results: notifications.map((notification, index) => ({
-            index,
-            success: true,
-            notificationId: "bulk-simulated-" + index,
-          })),
-        },
+      const successful = results.filter(
+        (result): result is PromiseFulfilledResult<any> =>
+          result.status === "fulfilled" && result.value.success
+      ).length;
+
+      const failed = results.length - successful;
+
+      res.json({
+        success: failed === 0,
+        total: notifications.length,
+        successful,
+        failed,
+        results: results.map((result, index) => ({
+          index,
+          success: result.status === "fulfilled" && result.value.success,
+          notificationId:
+            result.status === "fulfilled" ? result.value.notificationId : null,
+          error: result.status === "rejected" ? result.reason.message : null,
+        })),
       });
-    } catch (error) {
-      next(error);
+    } catch (error: any) {
+      console.error("Erro ao enviar notificações em massa:", error);
+      res.status(error.statusCode || 500).json({
+        success: false,
+        error: error.message,
+      });
     }
   };
 
-  // ✅ MÉTODOS QUE ESTAVAM FALTANDO:
-
-  public getNotificationHistory = async (
-    req: AuthRequest,
-    res: Response,
-    next: NextFunction
-  ) => {
+  // ✅ OBTER HISTÓRICO DE NOTIFICAÇÕES
+  getNotificationHistory = async (req: Request, res: Response): Promise<void> => {
     try {
-      const userId = req.user?.id;
-      const { page = 1, limit = 10, channel, type } = req.query;
+      const { email } = (req as any).user;
+      const { page = 1, limit = 20, channel, type } = req.query;
 
-      // Simulação - em produção, buscar do banco
-      const history = {
-        email: userId || "user@example.com",
-        notifications: [
-          {
-            id: "1",
-            channel: "email",
-            type: "welcome",
-            status: "sent",
-            sentAt: new Date(),
-            content: "Email de boas-vindas",
-          },
-        ],
-        total: 1,
-      };
+      const history = await this.notificationService.getUserNotificationHistory(
+        email,
+        {
+          page: parseInt(page as string),
+          limit: parseInt(limit as string),
+          channel: channel as string,
+          type: type as string,
+        }
+      );
 
-      res.status(200).json({
-        success: true,
-        data: history,
+      res.json(history);
+    } catch (error: any) {
+      console.error("Erro ao buscar histórico de notificações:", error);
+      res.status(error.statusCode || 500).json({
+        error: error.message,
       });
-    } catch (error) {
-      next(error);
     }
   };
 
-  public getPreferences = async (
-    req: AuthRequest,
-    res: Response,
-    next: NextFunction
-  ) => {
+  // ✅ OBTER PREFERÊNCIAS DO USUÁRIO
+  getPreferences = async (req: Request, res: Response): Promise<void> => {
     try {
-      const userId = req.user?.id;
+      const { email } = (req as any).user;
 
-      const preferences = {
-        channels: {
-          email: true,
-          whatsapp: true,
-          sms: false,
-          push: true,
-          system: true,
-        },
-        globalOptIn: true,
-      };
+      const preferences = await this.notificationService.getUserPreferences(
+        email
+      );
 
-      res.status(200).json({
-        success: true,
-        data: preferences,
+      res.json({
+        email,
+        preferences,
       });
-    } catch (error) {
-      next(error);
+    } catch (error: any) {
+      console.error("Erro ao buscar preferências:", error);
+      res.status(error.statusCode || 500).json({
+        error: error.message,
+      });
     }
   };
 
-  public updatePreferences = async (
-    req: AuthRequest,
-    res: Response,
-    next: NextFunction
-  ) => {
+  // ✅ ATUALIZAR PREFERÊNCIAS DO USUÁRIO
+  updatePreferences = async (req: Request, res: Response): Promise<void> => {
     try {
-      const userId = req.user?.id;
+      const { email } = (req as any).user;
       const { channels } = req.body;
 
-      console.log(
-        `[PREFERENCES] Atualizando preferências para usuário: ${userId}`
+      if (!channels) {
+        throw new AppError("Canais são obrigatórios", 400);
+      }
+
+      const preferences = await this.notificationService.updateUserPreferences(
+        email,
+        channels
       );
 
-      res.status(200).json({
-        success: true,
-        message: "Preferências de notificação atualizadas",
-        data: {
-          channels: channels || {
-            email: true,
-            whatsapp: true,
-            sms: false,
-            push: true,
-          },
-        },
+      res.json({
+        email,
+        preferences,
+        message: "Preferências atualizadas com sucesso",
       });
-    } catch (error) {
-      next(error);
+    } catch (error: any) {
+      console.error("Erro ao atualizar preferências:", error);
+      res.status(error.statusCode || 500).json({
+        error: error.message,
+      });
     }
   };
 
-  public getTemplates = async (
-    req: AuthRequest,
-    res: Response,
-    next: NextFunction
-  ) => {
+  // ✅ OBTER TEMPLATES (CORRIGIDO)
+  getTemplates = async (req: Request, res: Response): Promise<void> => {
     try {
-      const { type, channel } = req.query;
+      const { channel, type } = req.query;
 
-      // Simulação - em produção, buscar templates do banco
-      const templates = {
-        welcome: {
-          email: "Template de boas-vindas por email",
-          whatsapp: "Template de boas-vindas por WhatsApp",
-          sms: "Template de boas-vindas por SMS",
-        },
-        otp: {
-          email: "Template de OTP por email",
-          whatsapp: "Template de OTP por WhatsApp",
-          sms: "Template de OTP por SMS",
-        },
-      };
+      const templates = await this.notificationService.getTemplates(
+        type as NotificationType,
+        channel as NotificationChannel
+      );
 
-      res.status(200).json({
-        success: true,
-        data: templates,
+      res.json({
+        templates,
+        total: typeof templates === 'object' ? Object.keys(templates).length : 1,
+        filters: {
+          channel: channel || "all",
+          type: type || "all",
+        },
       });
-    } catch (error) {
-      next(error);
+    } catch (error: any) {
+      console.error("Erro ao buscar templates:", error);
+      res.status(error.statusCode || 500).json({
+        error: error.message,
+      });
     }
   };
 
-  public getAnalytics = async (
-    req: AuthRequest,
-    res: Response,
-    next: NextFunction
-  ) => {
+  // ✅ OBTER ANALYTICS
+  getAnalytics = async (req: Request, res: Response): Promise<void> => {
     try {
       const { startDate, endDate, channel } = req.query;
 
-      // Simulação - em produção, gerar analytics do banco
-      const analytics = {
-        period: {
-          start: startDate || new Date().toISOString(),
-          end: endDate || new Date().toISOString(),
-        },
-        totalSent: 100,
-        byChannel: {
-          email: 60,
-          whatsapp: 30,
-          sms: 10,
-        },
-        byType: {
-          welcome: 40,
-          otp: 35,
-          reminder: 25,
-        },
-        successRate: 95.5,
-      };
-
-      res.status(200).json({
-        success: true,
-        data: analytics,
+      const analytics = await this.notificationService.getAnalytics({
+        startDate: startDate as string,
+        endDate: endDate as string,
+        channel: channel as string,
       });
-    } catch (error) {
-      next(error);
+
+      res.json(analytics);
+    } catch (error: any) {
+      console.error("Erro ao buscar analytics:", error);
+      res.status(error.statusCode || 500).json({
+        error: error.message,
+      });
     }
   };
 
-  public getStats = async (
-    req: AuthRequest,
-    res: Response,
-    next: NextFunction
-  ) => {
+  // ✅ OBTER ESTATÍSTICAS
+  getStats = async (req: Request, res: Response): Promise<void> => {
     try {
-      // Simulação - em produção, calcular stats do banco
-      const stats = {
-        total: 1000,
-        byChannel: {
-          email: 600,
-          whatsapp: 300,
-          sms: 100,
-        },
-        byType: {
-          welcome: 400,
-          otp: 350,
-          reminder: 250,
-        },
-        byStatus: {
-          sent: 950,
-          failed: 50,
-          pending: 0,
-        },
-        successRate: 95,
-      };
+      const stats = await this.notificationService.getStats();
 
-      res.status(200).json({
-        success: true,
-        data: stats,
+      res.json(stats);
+    } catch (error: any) {
+      console.error("Erro ao buscar estatísticas:", error);
+      res.status(error.statusCode || 500).json({
+        error: error.message,
       });
-    } catch (error) {
-      next(error);
     }
   };
 
-  public getNotificationById = async (
-    req: AuthRequest,
-    res: Response,
-    next: NextFunction
-  ) => {
+  // ✅ OBTER NOTIFICAÇÃO POR ID
+  getNotificationById = async (req: Request, res: Response): Promise<void> => {
     try {
       const { id } = req.params;
 
@@ -279,24 +329,143 @@ export class NotificationController {
         throw new AppError("ID da notificação é obrigatório", 400);
       }
 
-      // Simulação - em produção, buscar do banco
-      const notification = {
-        id: id,
-        email: "user@example.com",
-        channel: "email",
-        type: "welcome",
-        status: "sent",
-        content: "Conteúdo da notificação",
-        sentAt: new Date(),
-        data: {},
-      };
+      const notification = await this.notificationService.getNotificationById(
+        id
+      );
 
-      res.status(200).json({
-        success: true,
-        data: notification,
+      res.json(notification);
+    } catch (error: any) {
+      console.error("Erro ao buscar notificação:", error);
+      res.status(error.statusCode || 500).json({
+        error: error.message,
       });
-    } catch (error) {
-      next(error);
+    }
+  };
+
+  // ✅ MARCAR NOTIFICAÇÃO COMO LIDA
+  markAsRead = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { id } = req.params;
+      const { email } = (req as any).user;
+
+      if (!id) {
+        throw new AppError("ID da notificação é obrigatório", 400);
+      }
+
+      const result = await this.notificationService.markAsRead(id, email);
+
+      res.json({
+        success: true,
+        message: "Notificação marcada como lida",
+        ...result,
+      });
+    } catch (error: any) {
+      console.error("Erro ao marcar notificação como lida:", error);
+      res.status(error.statusCode || 500).json({
+        success: false,
+        error: error.message,
+      });
+    }
+  };
+
+  // ✅ MARCAR TODAS COMO LIDAS
+  markAllAsRead = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { email } = (req as any).user;
+
+      const result = await this.notificationService.markAllAsRead(email);
+
+      res.json({
+        success: true,
+        message: `${result.markedCount} notificações marcadas como lidas`,
+        ...result,
+      });
+    } catch (error: any) {
+      console.error("Erro ao marcar todas como lidas:", error);
+      res.status(error.statusCode || 500).json({
+        success: false,
+        error: error.message,
+      });
+    }
+  };
+
+  // ✅ EXCLUIR NOTIFICAÇÃO
+  deleteNotification = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { id } = req.params;
+      const { email } = (req as any).user;
+
+      if (!id) {
+        throw new AppError("ID da notificação é obrigatório", 400);
+      }
+
+      const result = await this.notificationService.deleteNotification(id, email);
+
+      res.json({
+        success: true,
+        message: "Notificação excluída com sucesso",
+        ...result,
+      });
+    } catch (error: any) {
+      console.error("Erro ao excluir notificação:", error);
+      res.status(error.statusCode || 500).json({
+        success: false,
+        error: error.message,
+      });
+    }
+  };
+
+  // ✅ LIMPAR HISTÓRICO
+  clearHistory = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { email } = (req as any).user;
+      const { channel, type } = req.query;
+
+      const result = await this.notificationService.clearHistory(email, {
+        channel: channel as string,
+        type: type as string,
+      });
+
+      res.json({
+        success: true,
+        message: `Histórico limpo (${result.deletedCount} notificações excluídas)`,
+        ...result,
+      });
+    } catch (error: any) {
+      console.error("Erro ao limpar histórico:", error);
+      res.status(error.statusCode || 500).json({
+        success: false,
+        error: error.message,
+      });
+    }
+  };
+
+  // ✅ HEALTH CHECK
+  healthCheck = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const [stats, templates] = await Promise.all([
+        this.notificationService.getStats(),
+        this.notificationService.getTemplates(),
+      ]);
+
+      res.json({
+        service: "notification-controller",
+        status: "healthy",
+        timestamp: new Date().toISOString(),
+        stats: {
+          totalNotifications: stats.total,
+          successRate: stats.successRate,
+        },
+        templatesCount: typeof templates === 'object' ? Object.keys(templates).length : 1,
+      });
+    } catch (error: any) {
+      console.error("Erro no health check:", error);
+      res.status(500).json({
+        service: "notification-controller",
+        status: "unhealthy",
+        error: error.message,
+        timestamp: new Date().toISOString(),
+      });
     }
   };
 }

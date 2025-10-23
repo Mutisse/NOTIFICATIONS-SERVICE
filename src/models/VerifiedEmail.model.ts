@@ -1,8 +1,8 @@
-import mongoose, { Schema, Document } from "mongoose";
+import mongoose, { Document, Schema } from 'mongoose';
 
 export interface IVerifiedEmail extends Document {
   email: string;
-  purpose: "registration" | "password_reset" | "email_change";
+  purpose: string;
   isVerified: boolean;
   verifiedAt: Date;
   expiresAt: Date;
@@ -10,33 +10,32 @@ export interface IVerifiedEmail extends Document {
   updatedAt: Date;
 }
 
-const VerifiedEmailSchema = new Schema(
+const VerifiedEmailSchema = new Schema<IVerifiedEmail>(
   {
     email: {
       type: String,
       required: true,
-      lowercase: true,
       trim: true,
+      lowercase: true,
+      index: true,
     },
     purpose: {
       type: String,
       required: true,
-      enum: ["registration", "password_reset", "email_change"],
-      default: "registration",
+      enum: ['registration', 'password_reset', 'email_change'],
+      default: 'registration',
     },
     isVerified: {
       type: Boolean,
-      required: true,
       default: false,
     },
     verifiedAt: {
       type: Date,
-      default: null,
     },
     expiresAt: {
       type: Date,
       required: true,
-      default: () => new Date(Date.now() + 24 * 60 * 60 * 1000), // 24 horas
+      index: true,
     },
   },
   {
@@ -44,18 +43,12 @@ const VerifiedEmailSchema = new Schema(
   }
 );
 
-// Índice para buscar verificações válidas rapidamente
-VerifiedEmailSchema.index({
-  email: 1,
-  purpose: 1,
-  isVerified: 1,
-  expiresAt: 1,
-});
-
-// Índice TTL para limpar automaticamente após expiração
+// Índices para melhor performance
+VerifiedEmailSchema.index({ email: 1, purpose: 1 });
 VerifiedEmailSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
+VerifiedEmailSchema.index({ isVerified: 1 });
 
 export const VerifiedEmailModel = mongoose.model<IVerifiedEmail>(
-  "VerifiedEmail",
+  'VerifiedEmail', 
   VerifiedEmailSchema
 );
