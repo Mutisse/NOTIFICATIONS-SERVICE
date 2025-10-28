@@ -1,9 +1,10 @@
-// NOTIFICATIONS-SERVICE/src/routes/index.ts
+// NOTIFICATIONS-SERVICE/src/routes/all-notification.routes.ts
 import { Router } from "express";
 import { NotificationController } from "../controllers/notifications/Notification.controller";
 import { OTPController } from "../controllers/otp/OTP.controller";
 import { NotificationService } from "../services/notifications/Notification.service";
 import { OTPService } from "../services/otp/OTP.service";
+import { notificationDiagnostic } from "../services/diagnostics/notification-service.diagnostic";
 import { authMiddleware } from "../middleware/auth.middleware";
 import {
   otpRateLimit,
@@ -19,7 +20,35 @@ const notificationService = new NotificationService();
 const otpService = new OTPService();
 
 // =============================================
-// 🎯 ROTAS PÚBLICAS - NOVO FLUXO OTP
+// 🆕 ROTAS DE DIAGNÓSTICO DO NOTIFICATION SERVICE
+// =============================================
+
+router.get("/diagnostics/full", async (req, res) => {
+  try {
+    const diagnostic = await notificationDiagnostic.fullDiagnostic();
+    res.json(diagnostic);
+  } catch (error: any) {
+    res.status(500).json({
+      error: "Notification service diagnostic failed",
+      message: error.message,
+    });
+  }
+});
+
+router.get("/diagnostics/quick", async (req, res) => {
+  try {
+    const diagnostic = await notificationDiagnostic.quickDiagnostic();
+    res.json(diagnostic);
+  } catch (error: any) {
+    res.status(500).json({
+      error: "Quick diagnostic failed",
+      message: error.message,
+    });
+  }
+});
+
+// =============================================
+// 🎯 ROTAS PÚBLICAS - EMAIL DE VERIFICAÇÃO
 // =============================================
 
 router.post(
@@ -58,12 +87,11 @@ router.post("/otp/resend", otpRateLimit, otpController.resendOTP);
 // =============================================
 
 router.get("/otp/status/:email", otpController.getStatus);
-// ✅ REMOVIDO: router.get("/otp/statistics/:email", otpController.getStatistics); - MÉTODO NÃO EXISTE
+router.get("/otp/statistics/:email", otpController.getStatistics);
 router.get(
   "/otp/verification/:email/:purpose?",
   otpController.checkVerification
 );
-// ✅ NOVA ROTA: Verificar OTP ativo
 router.get("/otp/active/:email", otpController.checkActiveOTP);
 
 // =============================================
@@ -71,10 +99,10 @@ router.get("/otp/active/:email", otpController.checkActiveOTP);
 // =============================================
 
 router.delete("/otp/cleanup", otpController.cleanup);
-// ✅ REMOVIDO: router.get("/otp/admin/global-stats", otpController.globalStats); - MÉTODO NÃO EXISTE
+router.get("/otp/admin/global-stats", otpController.globalStats);
 
 // =============================================
-// 🛡️ ROTAS PROTEGIDAS - NOTIFICAÇÕES
+// 🛡️ ROTAS PROTEGIDAS - NOTIFICAÇÕES (REQUEREM AUTH)
 // =============================================
 
 router.get(
@@ -99,7 +127,7 @@ router.get(
 );
 
 // =============================================
-// 📈 ROTAS ADMIN - NOTIFICAÇÕES
+// 📈 ROTAS ADMIN - NOTIFICAÇÕES (REQUEREM AUTH)
 // =============================================
 
 router.get(
@@ -116,6 +144,31 @@ router.get(
   "/notifications/:id",
   authMiddleware,
   notificationController.getNotificationById
+);
+
+// =============================================
+// 🔄 ROTAS DE GERENCIAMENTO DE NOTIFICAÇÕES (REQUEREM AUTH)
+// =============================================
+
+router.patch(
+  "/notifications/:id/read",
+  authMiddleware,
+  notificationController.markAsRead
+);
+router.patch(
+  "/notifications/mark-all-read",
+  authMiddleware,
+  notificationController.markAllAsRead
+);
+router.delete(
+  "/notifications/:id",
+  authMiddleware,
+  notificationController.deleteNotification
+);
+router.delete(
+  "/notifications/history/clear",
+  authMiddleware,
+  notificationController.clearHistory
 );
 
 // =============================================
@@ -269,14 +322,18 @@ router.get("/internal/users/:email/verification-status", async (req, res) => {
   }
 });
 
-// ✅ NOVA ROTA INTERNA: Verificar OTP ativo
+// ✅ ROTA INTERNA: Verificar OTP ativo (CORRIGIDA)
 router.get("/internal/users/:email/active-otp", async (req, res) => {
   try {
     const { email } = req.params;
     const { purpose } = req.query;
     console.log(`[INTERNAL] Verificando OTP ativo para: ${email}`);
 
-    const hasActiveOTP = await otpService.hasActiveOTP(email, purpose as string);
+    // ✅ CORREÇÃO: Usar método existente hasActiveOTP
+    const hasActiveOTP = await otpService.hasActiveOTP(
+      email,
+      purpose as string
+    );
 
     res.json({
       email,
@@ -291,12 +348,13 @@ router.get("/internal/users/:email/active-otp", async (req, res) => {
   }
 });
 
-// ✅ NOVA ROTA INTERNA: Status completo do OTP
+// ✅ ROTA INTERNA: Status completo do OTP (CORRIGIDA)
 router.get("/internal/users/:email/otp-status", async (req, res) => {
   try {
     const { email } = req.params;
     console.log(`[INTERNAL] Buscando status completo OTP para: ${email}`);
 
+    // ✅ CORREÇÃO: Usar método existente getOTPStatus
     const status = await otpService.getOTPStatus(email);
 
     res.json({
@@ -312,7 +370,7 @@ router.get("/internal/users/:email/otp-status", async (req, res) => {
 });
 
 // =============================================
-// 🩺 HEALTH CHECKS (OBRIGATÓRIOS)
+// 🩺 HEALTH CHECKS
 // =============================================
 
 router.get("/health", (req, res) => {
@@ -320,8 +378,51 @@ router.get("/health", (req, res) => {
     service: "notification-service",
     status: "healthy",
     timestamp: new Date().toISOString(),
-    version: "1.0.0",
-    modules: ["notifications", "otp", "internal-routes"],
+    version: "1.2.0",
+    modules: [
+      "notifications",
+      "otp",
+      "internal-routes",
+      "diagnostics",
+      "templates",
+      "analytics",
+    ],
+    endpoints: {
+      public: [
+        "POST /notifications/send-verification-email",
+        "POST /notifications/verify-email-otp",
+        "POST /notifications/send-welcome-email",
+        "POST /notifications/send",
+        "POST /notifications/send-bulk",
+        "POST /otp/send",
+        "POST /otp/verify",
+        "POST /otp/resend",
+      ],
+      protected: [
+        "GET /notifications/history",
+        "GET /notifications/preferences",
+        "PUT /notifications/preferences",
+        "GET /notifications/templates",
+        "GET /notifications/analytics",
+        "GET /notifications/stats",
+        "GET /notifications/:id",
+        "PATCH /notifications/:id/read",
+        "PATCH /notifications/mark-all-read",
+        "DELETE /notifications/:id",
+        "DELETE /notifications/history/clear",
+      ],
+      internal: [
+        "POST /internal/notifications/otp",
+        "POST /internal/notifications/welcome",
+        "POST /internal/notifications/send",
+        "POST /internal/notifications/verify-email",
+        "GET /internal/users/:email/preferences",
+        "GET /internal/users/:email/verification-status",
+        "GET /internal/users/:email/active-otp",
+        "GET /internal/users/:email/otp-status",
+      ],
+      diagnostic: ["GET /diagnostics/full", "GET /diagnostics/quick"],
+    },
   });
 });
 
@@ -331,25 +432,13 @@ router.get("/ping", (req, res) => {
     status: "healthy",
     timestamp: new Date().toISOString(),
     uptime: process.uptime(),
+    memory: process.memoryUsage(),
   });
 });
 
-// Health checks individuais
-router.get("/notifications/health", (req, res) => {
-  res.json({
-    service: "notifications",
-    status: "healthy",
-    timestamp: new Date().toISOString(),
-  });
-});
-
-router.get("/otp/health", (req, res) => {
-  res.json({
-    service: "otp",
-    status: "healthy",
-    timestamp: new Date().toISOString(),
-  });
-});
+// Health checks individuais para módulos específicos
+router.get("/notifications/health", notificationController.healthCheck);
+router.get("/otp/health", otpController.healthCheck); // ✅ CORREÇÃO: Usar o método do controller
 
 router.get("/internal/health", (req, res) => {
   res.json({

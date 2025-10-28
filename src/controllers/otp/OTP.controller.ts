@@ -1,4 +1,4 @@
-// NOTIFICATIONS-SERVICE/src/controllers/otpController.ts
+// NOTIFICATIONS-SERVICE/src/controllers/otp/OTP.controller.ts
 import { Request, Response, NextFunction } from "express";
 import { OTPService } from "../../services/otp/OTP.service";
 import { AppError } from "../../utils/AppError";
@@ -10,6 +10,7 @@ export class OTPController {
     this.otpService = new OTPService();
   }
 
+  // ✅ ENVIAR OTP - CORRIGIDO
   public sendOTP = async (req: Request, res: Response, next: NextFunction) => {
     try {
       const { email, purpose = "registration", name } = req.body;
@@ -32,6 +33,7 @@ export class OTPController {
       const result = await this.otpService.sendOTP(email, purpose, name);
 
       if (!result.success) {
+        // CORREÇÃO: Usar retryAfter diretamente já que message não existe
         throw new AppError(
           `Aguarde ${result.retryAfter} segundos para solicitar um novo código`,
           429,
@@ -50,11 +52,12 @@ export class OTPController {
           expiresIn: "10 minutos",
         },
       });
-    } catch (error) {
+    } catch (error: any) {
       next(error);
     }
   };
 
+  // ✅ VERIFICAR OTP
   public verifyOTP = async (
     req: Request,
     res: Response,
@@ -63,18 +66,12 @@ export class OTPController {
     try {
       console.log("🔐 [OTP VERIFY] Recebendo requisição:", req.body);
 
-      // ✅ CORREÇÃO: Aceitar tanto 'otpCode' quanto 'code' para compatibilidade
       const { email, otpCode, code, purpose = "registration" } = req.body;
-
-      // ✅ Compatibilidade: usar 'code' se 'otpCode' não estiver presente
       const finalOtpCode = otpCode || code;
 
-      // ✅ VALIDAÇÕES DETALHADAS
       if (!email || !finalOtpCode) {
         console.log("❌ [OTP VERIFY] Campos obrigatórios faltando:", {
           email,
-          receivedOtpCode: otpCode,
-          receivedCode: code,
           finalOtpCode,
         });
         throw new AppError(
@@ -86,12 +83,10 @@ export class OTPController {
 
       const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
       if (!emailRegex.test(email)) {
-        console.log("❌ [OTP VERIFY] Email inválido:", email);
         throw new AppError("Formato de email inválido", 400, "INVALID_EMAIL");
       }
 
       if (!/^\d{6}$/.test(finalOtpCode)) {
-        console.log("❌ [OTP VERIFY] Código inválido:", finalOtpCode);
         throw new AppError(
           "Código deve ter exatamente 6 dígitos",
           400,
@@ -100,10 +95,9 @@ export class OTPController {
       }
 
       console.log(
-        `✅ [OTP VERIFY] Validando OTP: ${finalOtpCode} para ${email}, propósito: ${purpose}`
+        `✅ [OTP VERIFY] Validando OTP: ${finalOtpCode} para ${email}`
       );
 
-      // ✅ CHAMAR O SERVIÇO
       const result = await this.otpService.verifyOTP(
         email,
         finalOtpCode,
@@ -127,11 +121,53 @@ export class OTPController {
           verifiedAt: new Date().toISOString(),
         },
       });
-    } catch (error) {
+    } catch (error: any) {
       next(error);
     }
   };
 
+  // ✅ INVALIDAR OTP - CORRIGIDO
+  public invalidateOTP = async (
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ) => {
+    try {
+      const { email, purpose = "password-recovery" } = req.body;
+
+      console.log(
+        `🔄 [OTP INVALIDATE] Invalidando OTP para: ${email}, propósito: ${purpose}`
+      );
+
+      if (!email) {
+        throw new AppError("Email é obrigatório", 400, "MISSING_EMAIL");
+      }
+
+      const result = await this.otpService.invalidateOTP(email, purpose);
+
+      if (!result.success) {
+        throw new AppError(
+          result.message || "Falha ao invalidar OTP",
+          400,
+          "INVALIDATE_FAILED"
+        );
+      }
+
+      res.status(200).json({
+        success: true,
+        message: "OTP invalidado com sucesso",
+        data: {
+          email,
+          purpose,
+          invalidatedAt: new Date().toISOString(),
+        },
+      });
+    } catch (error: any) {
+      next(error);
+    }
+  };
+
+  // ✅ REENVIAR OTP - CORRIGIDO
   public resendOTP = async (
     req: Request,
     res: Response,
@@ -146,14 +182,10 @@ export class OTPController {
         throw new AppError("Email é obrigatório", 400, "MISSING_EMAIL");
       }
 
-      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-      if (!emailRegex.test(email)) {
-        throw new AppError("Formato de email inválido", 400, "INVALID_EMAIL");
-      }
-
       const result = await this.otpService.resendOTP(email, name);
 
       if (!result.success) {
+        // CORREÇÃO: Usar retryAfter diretamente
         throw new AppError(
           `Aguarde ${result.retryAfter} segundos para solicitar um novo código`,
           429,
@@ -171,11 +203,12 @@ export class OTPController {
           expiresIn: "10 minutos",
         },
       });
-    } catch (error) {
+    } catch (error: any) {
       next(error);
     }
   };
 
+  // ✅ OBTER STATUS DO OTP
   public getStatus = async (
     req: Request,
     res: Response,
@@ -184,30 +217,46 @@ export class OTPController {
     try {
       const { email } = req.params;
 
-      console.log("📊 [OTP STATUS] Recebendo requisição para:", email);
-
       if (!email) {
         throw new AppError("Email é obrigatório", 400, "MISSING_EMAIL");
       }
 
-      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-      if (!emailRegex.test(email)) {
-        throw new AppError("Formato de email inválido", 400, "INVALID_EMAIL");
-      }
-
       const status = await this.otpService.getOTPStatus(email);
-
-      console.log(`✅ [OTP STATUS] Status recuperado para: ${email}`);
 
       res.status(200).json({
         success: true,
         data: status,
       });
-    } catch (error) {
+    } catch (error: any) {
       next(error);
     }
   };
 
+  // ✅ OBTER ESTATÍSTICAS DO OTP
+  public getStatistics = async (
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ) => {
+    try {
+      const { email } = req.params;
+
+      if (!email) {
+        throw new AppError("Email é obrigatório", 400, "MISSING_EMAIL");
+      }
+
+      const statistics = await this.otpService.getStatistics(email);
+
+      res.status(200).json({
+        success: true,
+        data: statistics,
+      });
+    } catch (error: any) {
+      next(error);
+    }
+  };
+
+  // ✅ VERIFICAR STATUS DE VERIFICAÇÃO
   public checkVerification = async (
     req: Request,
     res: Response,
@@ -216,24 +265,11 @@ export class OTPController {
     try {
       const { email, purpose = "registration" } = req.params;
 
-      console.log("🔍 [OTP CHECK] Verificando email:", { email, purpose });
-
       if (!email) {
         throw new AppError("Email é obrigatório", 400, "MISSING_EMAIL");
       }
 
-      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-      if (!emailRegex.test(email)) {
-        throw new AppError("Formato de email inválido", 400, "INVALID_EMAIL");
-      }
-
       const isVerified = await this.otpService.isEmailVerified(email, purpose);
-
-      console.log(
-        `✅ [OTP CHECK] Verificação concluída para: ${email} - ${
-          isVerified ? "VERIFICADO" : "NÃO VERIFICADO"
-        }`
-      );
 
       res.status(200).json({
         success: true,
@@ -244,31 +280,12 @@ export class OTPController {
           verifiedAt: isVerified ? new Date().toISOString() : null,
         },
       });
-    } catch (error) {
+    } catch (error: any) {
       next(error);
     }
   };
 
-  public cleanup = async (req: Request, res: Response, next: NextFunction) => {
-    try {
-      console.log("🧹 [OTP CLEANUP] Iniciando limpeza de OTPs expirados");
-
-      const result = await this.otpService.cleanupExpiredOTPs();
-
-      console.log(
-        `✅ [OTP CLEANUP] Limpeza concluída: ${result.deleted} OTPs expirados removidos`
-      );
-
-      res.status(200).json({
-        success: true,
-        message: `Limpeza concluída: ${result.deleted} OTPs expirados removidos`,
-        data: result,
-      });
-    } catch (error) {
-      next(error);
-    }
-  };
-
+  // ✅ VERIFICAR OTP ATIVO
   public checkActiveOTP = async (
     req: Request,
     res: Response,
@@ -278,29 +295,13 @@ export class OTPController {
       const { email } = req.params;
       const { purpose } = req.query;
 
-      console.log("🔍 [OTP ACTIVE] Verificando OTP ativo para:", {
-        email,
-        purpose,
-      });
-
       if (!email) {
         throw new AppError("Email é obrigatório", 400, "MISSING_EMAIL");
-      }
-
-      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-      if (!emailRegex.test(email)) {
-        throw new AppError("Formato de email inválido", 400, "INVALID_EMAIL");
       }
 
       const hasActiveOTP = await this.otpService.hasActiveOTP(
         email,
         purpose as string
-      );
-
-      console.log(
-        `✅ [OTP ACTIVE] Verificação concluída: ${email} - ${
-          hasActiveOTP ? "TEM OTP ATIVO" : "SEM OTP ATIVO"
-        }`
       );
 
       res.status(200).json({
@@ -309,11 +310,86 @@ export class OTPController {
           email,
           purpose: purpose || "registration",
           hasActiveOTP,
-          checkedAt: new Date().toISOString(),
+          message: hasActiveOTP
+            ? "Existe um OTP ativo para este email"
+            : "Nenhum OTP ativo encontrado",
         },
       });
-    } catch (error) {
+    } catch (error: any) {
       next(error);
+    }
+  };
+
+  // ✅ LIMPEZA DE OTPS
+  public cleanup = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const { olderThan = 24 } = req.query; // horas
+
+      const cutoffDate = new Date(
+        Date.now() - parseInt(olderThan as string) * 60 * 60 * 1000
+      );
+
+      const result = await this.otpService.cleanupExpiredOTPs(cutoffDate);
+
+      res.status(200).json({
+        success: true,
+        message: `Limpeza de OTPs concluída`,
+        data: {
+          deletedCount: result.deletedCount,
+          cutoffDate: cutoffDate.toISOString(),
+          olderThan: `${olderThan} horas`,
+        },
+      });
+    } catch (error: any) {
+      next(error);
+    }
+  };
+
+  // ✅ ESTATÍSTICAS GLOBAIS
+  public globalStats = async (
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ) => {
+    try {
+      const stats = await this.otpService.globalStats();
+
+      res.status(200).json({
+        success: true,
+        data: stats,
+      });
+    } catch (error: any) {
+      next(error);
+    }
+  };
+
+  // ✅ HEALTH CHECK DO OTP
+  public healthCheck = async (
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ) => {
+    try {
+      const stats = await this.otpService.globalStats();
+
+      res.status(200).json({
+        service: "otp-service",
+        status: "healthy",
+        timestamp: new Date().toISOString(),
+        data: {
+          totalOTPs: stats.total,
+          activeOTPs: stats.active,
+          verificationRate: stats.verificationRate,
+          purposes: stats.purposes,
+        },
+      });
+    } catch (error: any) {
+      res.status(500).json({
+        service: "otp-service",
+        status: "unhealthy",
+        error: error.message,
+        timestamp: new Date().toISOString(),
+      });
     }
   };
 }

@@ -8,7 +8,7 @@ import {
   disconnectDB, 
   getDatabaseStatus,
   healthCheck 
-} from "./database";
+} from"./database.config";
 import chalk from "chalk";
 
 const getTimestamp = () => chalk.gray(`[${new Date().toISOString()}]`);

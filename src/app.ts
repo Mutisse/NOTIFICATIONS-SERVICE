@@ -3,8 +3,7 @@ import chalk from "chalk";
 import dotenv from "dotenv";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
-import diagnostic from "./utils/diagnostic.utils";
-import notifyRoutes from"./routes/all-notification.routes";
+import notifyRoutes from "./routes/all-notification.routes";
 
 dotenv.config();
 
@@ -52,17 +51,8 @@ app.use((req, res, next) => {
   next();
 });
 
-app.use(notifyRoutes)
+app.use(notifyRoutes);
 // Health Check
-app.get("/health", (req, res) => {
-  res.json({
-    status: "OK",
-    timestamp: new Date().toISOString(),
-    service: "Notification Service",
-    version: process.env.npm_package_version || "1.0.0",
-  });
-});
-
 // Rota raiz
 app.get("/notify", (req, res) => {
   res.json({
@@ -72,35 +62,5 @@ app.get("/notify", (req, res) => {
   });
 });
 
-// 404 Handler
-app.use((req, res) => {
-  res.status(404).json({
-    statusCode: 404,
-    message: "Endpoint não encontrado",
-    path: req.url,
-  });
-});
-
-// No startup
-//diagnostic.fullDiagnostic();
-// Endpoint de diagnóstico
-app.get("/diagnostic", async (req, res) => {
-  try {
-    const diagnosticResult = await diagnostic.fullDiagnostic();
-    res.json(diagnosticResult);
-  } catch (error) {
-    res.status(500).json({ error: "Diagnostic failed" });
-  }
-});
-
-// Endpoint rápido
-app.get("/diagnostic/quick", async (req, res) => {
-  try {
-    const diagnosticResult = await diagnostic.quickDiagnostic();
-    res.json(diagnosticResult);
-  } catch (error) {
-    res.status(500).json({ error: "Quick diagnostic failed" });
-  }
-});
 
 export default app;
