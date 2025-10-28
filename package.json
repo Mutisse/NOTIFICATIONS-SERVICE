@@ -2,11 +2,11 @@
   "name": "notifications-service",
   "version": "1.0.0",
   "description": "Microsserviço de notificações do BeautyTime",
-  "main": "dist/server.js",
+    "main": "dist/config/server.js",
   "scripts": {
-    "dev": "nodemon src/server.ts",
+    "dev": "nodemon --exec ts-node src/config/server.ts",
     "build": "tsc",
-    "start": "node dist/server.js",
+    "start": "node dist/config/server.js",
     "clean": "rm -rf dist"
   },
   "dependencies": {
