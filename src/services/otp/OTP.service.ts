@@ -77,7 +77,9 @@ export class OTPService {
 
       if (recentOTP) {
         const timeElapsed = Date.now() - recentOTP.createdAt.getTime();
-        const retryAfter = Math.ceil((this.OTP_CONFIG.RESEND_DELAY * 1000 - timeElapsed) / 1000);
+        const retryAfter = Math.ceil(
+          (this.OTP_CONFIG.RESEND_DELAY * 1000 - timeElapsed) / 1000
+        );
         if (retryAfter > 0) {
           return { success: false, retryAfter };
         }
@@ -91,10 +93,10 @@ export class OTPService {
 
       // Criar ou atualizar OTP
       const otpData = await OTPModel.findOneAndUpdate(
-        { 
-          email: cleanEmail, 
+        {
+          email: cleanEmail,
           purpose,
-          verified: false 
+          verified: false,
         },
         {
           email: cleanEmail,
@@ -105,11 +107,11 @@ export class OTPService {
           expiresAt,
           createdAt: new Date(),
           verifiedAt: null,
-          usedAt: null
+          usedAt: null,
         },
-        { 
-          upsert: true, 
-          new: true 
+        {
+          upsert: true,
+          new: true,
         }
       );
 
@@ -180,7 +182,7 @@ export class OTPService {
 
       const cleanEmail = email.toLowerCase().trim();
       const cleanOtpCode = otpCode.toString().trim();
-      
+
       if (!/^\d{6}$/.test(cleanOtpCode)) {
         return {
           success: false,
@@ -192,18 +194,19 @@ export class OTPService {
       const otpData = await OTPModel.findOne({
         email: cleanEmail,
         purpose: purpose,
-        expiresAt: { $gt: new Date() }
+        expiresAt: { $gt: new Date() },
       });
 
       if (!otpData) {
         return {
           success: false,
-          message: "Código OTP não encontrado ou expirado. Solicite um novo código.",
+          message:
+            "Código OTP não encontrado ou expirado. Solicite um novo código.",
         };
       }
 
       // ✅ CORREÇÃO: PERMITIR RE-VERIFICAÇÃO para password-recovery
-      if (otpData.verified && purpose !== 'password-recovery') {
+      if (otpData.verified && purpose !== "password-recovery") {
         return {
           success: false,
           message: "Código OTP já foi utilizado. Solicite um novo código.",
@@ -216,10 +219,11 @@ export class OTPService {
         otpData.verified = true;
         otpData.usedAt = new Date();
         await otpData.save();
-        
+
         return {
           success: false,
-          message: "Número máximo de tentativas excedido. Solicite um novo código.",
+          message:
+            "Número máximo de tentativas excedido. Solicite um novo código.",
         };
       }
 
@@ -228,7 +232,8 @@ export class OTPService {
         otpData.attempts += 1;
         await otpData.save();
 
-        const remainingAttempts = this.OTP_CONFIG.MAX_ATTEMPTS - otpData.attempts;
+        const remainingAttempts =
+          this.OTP_CONFIG.MAX_ATTEMPTS - otpData.attempts;
         return {
           success: false,
           message: `Código OTP inválido. ${remainingAttempts} tentativa(s) restante(s).`,
@@ -269,11 +274,11 @@ export class OTPService {
   }> {
     try {
       const cleanEmail = email.toLowerCase().trim();
-      
+
       // ✅ CORREÇÃO: Buscar OTP mais recente (verificado ou não)
       const otpRecord = await OTPModel.findOne({
         email: cleanEmail,
-        expiresAt: { $gt: new Date() } // Ainda não expirou
+        expiresAt: { $gt: new Date() }, // Ainda não expirou
       }).sort({ createdAt: -1 }); // Pega o mais recente
 
       if (!otpRecord) {
@@ -296,25 +301,32 @@ export class OTPService {
   }
 
   // ✅ NOVO MÉTODO: Invalidar OTP após uso
-  async invalidateOTP(email: string, purpose: string): Promise<{ success: boolean; message?: string }> {
+  async invalidateOTP(
+    email: string,
+    purpose: string
+  ): Promise<{ success: boolean; message?: string }> {
     try {
       const cleanEmail = email.toLowerCase().trim();
-      
+
       const result = await OTPModel.findOneAndDelete({
         email: cleanEmail,
         purpose,
-        verified: true
+        verified: true,
       });
 
       if (result) {
-        console.log(`✅ [OTP SERVICE] OTP invalidado para: ${email}, propósito: ${purpose}`);
+        console.log(
+          `✅ [OTP SERVICE] OTP invalidado para: ${email}, propósito: ${purpose}`
+        );
         return { success: true, message: "OTP invalidado com sucesso" };
       } else {
-        console.log(`⚠️ [OTP SERVICE] OTP não encontrado para invalidar: ${email}`);
+        console.log(
+          `⚠️ [OTP SERVICE] OTP não encontrado para invalidar: ${email}`
+        );
         return { success: false, message: "OTP não encontrado" };
       }
     } catch (error: any) {
-      console.error('❌ [OTP SERVICE] Erro ao invalidar OTP:', error.message);
+      console.error("❌ [OTP SERVICE] Erro ao invalidar OTP:", error.message);
       return { success: false, message: "Erro ao invalidar OTP" };
     }
   }
@@ -323,17 +335,17 @@ export class OTPService {
   async isOTPVerified(email: string, purpose: string): Promise<boolean> {
     try {
       const cleanEmail = email.toLowerCase().trim();
-      
+
       const otpRecord = await OTPModel.findOne({
         email: cleanEmail,
         purpose,
         verified: true,
-        expiresAt: { $gt: new Date() }
+        expiresAt: { $gt: new Date() },
       });
 
       return !!otpRecord;
     } catch (error: any) {
-      console.error('❌ [OTP SERVICE] Erro ao verificar OTP:', error.message);
+      console.error("❌ [OTP SERVICE] Erro ao verificar OTP:", error.message);
       return false;
     }
   }
@@ -342,7 +354,7 @@ export class OTPService {
   async hasActiveOTP(email: string, purpose?: string): Promise<boolean> {
     try {
       const cleanEmail = email.toLowerCase().trim();
-      
+
       const otpRecord = await OTPModel.findOne({
         email: cleanEmail,
         purpose: purpose || "registration",
@@ -362,7 +374,7 @@ export class OTPService {
   async getOTPStatus(email: string): Promise<OTPStatus> {
     try {
       const cleanEmail = email.toLowerCase().trim();
-      
+
       const activeOTP = await OTPModel.findOne({
         email: cleanEmail,
         expiresAt: { $gt: new Date() },
@@ -387,7 +399,7 @@ export class OTPService {
   async getStatistics(email: string): Promise<OTPStatistics> {
     try {
       const cleanEmail = email.toLowerCase().trim();
-      
+
       const userOTPs = await OTPModel.find({ email: cleanEmail });
       const total = userOTPs.length;
       const verified = userOTPs.filter((otp) => otp.verified).length;
@@ -498,24 +510,55 @@ export class OTPService {
   ): Promise<{ success: boolean; retryAfter?: number }> {
     try {
       const cleanEmail = email.toLowerCase().trim();
-      
+
+      // 1. BUSCAR OTP ATIVO MAIS RECENTE
       const existingOTP = await OTPModel.findOne({
         email: cleanEmail,
-        verified: false,
-        expiresAt: { $gt: new Date() },
-      });
+        verified: false, // Só considerar não verificados
+        expiresAt: { $gt: new Date() }, // Só considerar não expirados
+      }).sort({ createdAt: -1 }); // Pegar o mais recente
 
-      const purpose = existingOTP?.purpose || "registration";
-
+      // 2. SE EXISTIR OTP ATIVO, VERIFICAR SE PODE REENVIAR
       if (existingOTP) {
-        // Marcar OTP anterior como usado
-        await OTPModel.findByIdAndUpdate(existingOTP._id, {
-          verified: true,
-          usedAt: new Date(),
-        });
+        const timeSinceLastOTP = Date.now() - existingOTP.createdAt.getTime();
+        const timeLeft = Math.ceil((60000 - timeSinceLastOTP) / 1000); // 60 segundos
+
+        // 3. SE AINDA NÃO PASSOU 60 SEGUNDOS, BLOQUEAR
+        if (timeLeft > 0) {
+          return {
+            success: false,
+            retryAfter: timeLeft,
+          };
+        }
+
+        // 4. SE PASSOU 60 SEGUNDOS, MANTER O MESMO CÓDIGO E REENVIAR
+        console.log(
+          `🔄 [OTP SERVICE] Reenviando OTP existente: ${existingOTP.code} para ${email}`
+        );
+
+        // REENVIAR O MESMO CÓDIGO (não gerar novo)
+        const emailSent = await this.notificationService.sendOTP(
+          email,
+          existingOTP.code, // ⭐ USAR O CÓDIGO EXISTENTE
+          name,
+          UserRole.CLIENT
+        );
+
+        if (emailSent) {
+          // Atualizar timestamp do OTP existente
+          existingOTP.createdAt = new Date();
+          await existingOTP.save();
+
+          console.log(
+            `✅ [OTP SERVICE] OTP reenviado com sucesso: ${existingOTP.code} para ${email}`
+          );
+          return { success: true };
+        }
       }
 
-      return await this.sendOTP(email, purpose, name);
+      // 5. SE NÃO TEM OTP ATIVO, CRIAR NOVO
+      console.log(`📤 [OTP SERVICE] Criando novo OTP para: ${email}`);
+      return await this.sendOTP(email, "registration", name);
     } catch (error: any) {
       console.error(`❌ [OTP SERVICE] Erro ao reenviar OTP:`, error.message);
       throw error;
@@ -528,7 +571,7 @@ export class OTPService {
   ): Promise<void> {
     try {
       const cleanEmail = email.toLowerCase().trim();
-      
+
       await VerifiedEmailModel.findOneAndUpdate(
         { email: cleanEmail, purpose },
         {
@@ -560,7 +603,7 @@ export class OTPService {
   ): Promise<boolean> {
     try {
       const cleanEmail = email.toLowerCase().trim();
-      
+
       const verification = await VerifiedEmailModel.findOne({
         email: cleanEmail,
         purpose,
@@ -735,7 +778,7 @@ export class OTPService {
   }> {
     try {
       const cleanEmail = email.toLowerCase().trim();
-      
+
       const activeOTP = await OTPModel.findOne({
         email: cleanEmail,
         purpose,
